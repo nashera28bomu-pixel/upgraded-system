@@ -1,0 +1,15 @@
+services:
+  - type: worker
+    name: kra-tax-bot
+    env: node
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: MPESA_NUMBER
+        value: "0113821327"
