@@ -837,6 +837,21 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.player-ep-select {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.player-ep-select select {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.72rem;
+  font-family: var(--font-body);
+  max-width: 70px;
+}
 .video-container {
   flex: 1;
   display: flex;
@@ -1378,9 +1393,13 @@ img { loading: lazy; }
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
     </button>
     <div class="player-title" id="player-title">—</div>
+    <div class="player-ep-select" id="player-ep-select" style="display:none;">
+      <select id="season-select" onchange="changeEpisode()"></select>
+      <select id="episode-select" onchange="changeEpisode()"></select>
+    </div>
   </div>
   <div class="video-container">
-    <video id="main-video" controls playsinline></video>
+    <iframe id="main-player-frame" frameborder="0" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="origin" style="width:100%;height:100%;border:0;display:none;"></iframe>
     <div class="player-no-stream" id="no-stream-msg" style="display:none;">
       <h3>Stream Unavailable</h3>
       <p>Could not load stream for this title.<br>Try another movie.</p>
@@ -1713,110 +1732,130 @@ function closeDetail() {
 }
 
 // ═══════════════════════════════════════════
-// PLAY
+// PLAY — via VidSrc embed using TMDB ID
 // ═══════════════════════════════════════════
+// VidSrc requires no auth, accepts TMDB IDs directly (which we
+// already have from search/details), includes built-in multi-language
+// subtitles, and has multi-server failover for reliability — this
+// replaces the old MovieBox-scraper chain entirely.
+
+const VIDSRC_BASE = 'https://vidsrc.fyi/embed';
+
+function buildVidsrcUrl(tmdbId, mediaType, season, episode) {
+  if (mediaType === 'tv') {
+    return `${VIDSRC_BASE}/tv/${tmdbId}/${season}/${episode}`;
+  }
+  return `${VIDSRC_BASE}/movie/${tmdbId}`;
+}
+
+let currentSeason = 1;
+let currentEpisode = 1;
+
 async function playCurrentMovie() {
   if (!currentMovie) return;
   showFetch();
 
   const title = currentMovie.title || currentMovie.name;
+  const mediaType = currentMovie.mediaType === 'tv' ? 'tv' : 'movie';
+  const tmdbId = currentMovie.id;
+
   document.getElementById('player-title').textContent = title;
   document.getElementById('no-stream-msg').style.display = 'none';
 
-  const vid = document.getElementById('main-video');
-  vid.src = '';
-  vid.style.display = 'none';
+  const frame = document.getElementById('main-player-frame');
+  const epSelectWrap = document.getElementById('player-ep-select');
+  frame.style.display = 'none';
+  frame.src = '';
 
   document.getElementById('player-page').classList.add('open');
 
-  try {
-    // Search backend API for the slug
-    const searchRes = await fetch(`${STREAM_API}/search?q=${encodeURIComponent(title)}`);
-    const searchData = await searchRes.json();
-
-    let streamUrl = null;
-
-    // FIX: API returns { query, count, movies: [...] } — not a bare array.
-    const results = searchData?.movies || [];
-
-    if (results.length > 0) {
-      const first = results[0];
-      const slug = first.slug || first.url?.split('/detail/')?.[1];
-
-      if (slug) {
-        const detailRes = await fetch(`${STREAM_API}/detail/${slug}`);
-        const detailData = await detailRes.json();
-        const mp4s = detailData?.streams?.mp4 || [];
-        const hls  = detailData?.streams?.hls  || [];
-        streamUrl = mp4s[0] || hls[0] || null;
-
-        // FIX: if /detail has no direct mp4/hls links, fall back to
-        // /api/stream/{id}?detail_path={slug} using the subject id
-        // from the same /detail response.
-        if (!streamUrl) {
-          const subjectId = detailData?.metadata?.id;
-          if (subjectId) {
-            try {
-              const streamRes = await fetch(`${STREAM_API}/api/stream/${subjectId}?detail_path=${slug}`);
-              const streamData = await streamRes.json();
-              const sources = streamData?.sources || [];
-              streamUrl = sources[0]?.url || null;
-            } catch (e) {
-              // stream endpoint failed, streamUrl stays null
-            }
-          }
-        }
-      }
-    }
-
-    if (streamUrl) {
-      vid.src = streamUrl;
-      vid.style.display = 'block';
-      vid.play().catch(() => {});
-      currentStreamUrl = streamUrl;
-    } else {
-      document.getElementById('no-stream-msg').style.display = 'flex';
-    }
-  } catch(e) {
+  if (!tmdbId) {
     document.getElementById('no-stream-msg').style.display = 'flex';
+    hideFetch();
+    return;
   }
+
+  if (mediaType === 'tv') {
+    epSelectWrap.style.display = 'flex';
+    currentSeason = 1;
+    currentEpisode = 1;
+    populateSeasonEpisodeSelectors(currentMovie);
+  } else {
+    epSelectWrap.style.display = 'none';
+  }
+
+  const url = buildVidsrcUrl(tmdbId, mediaType, currentSeason, currentEpisode);
+  frame.src = url;
+  frame.style.display = 'block';
+  currentStreamUrl = url;
+
   hideFetch();
 }
 
+function populateSeasonEpisodeSelectors(movie) {
+  const seasonSel = document.getElementById('season-select');
+  const epSel = document.getElementById('episode-select');
+  const numSeasons = movie.number_of_seasons || 1;
+
+  seasonSel.innerHTML = '';
+  for (let s = 1; s <= numSeasons; s++) {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = 'S' + s;
+    seasonSel.appendChild(opt);
+  }
+
+  // Default episode list (most series have ~10-24 eps/season; user can scroll)
+  epSel.innerHTML = '';
+  for (let e = 1; e <= 30; e++) {
+    const opt = document.createElement('option');
+    opt.value = e;
+    opt.textContent = 'E' + e;
+    epSel.appendChild(opt);
+  }
+}
+
+function changeEpisode() {
+  const season = parseInt(document.getElementById('season-select').value, 10);
+  const episode = parseInt(document.getElementById('episode-select').value, 10);
+  currentSeason = season;
+  currentEpisode = episode;
+
+  if (!currentMovie) return;
+  const tmdbId = currentMovie.id;
+  const url = buildVidsrcUrl(tmdbId, 'tv', season, episode);
+  const frame = document.getElementById('main-player-frame');
+  frame.src = url;
+  currentStreamUrl = url;
+}
+
 function closePlayer() {
-  const vid = document.getElementById('main-video');
-  vid.pause();
-  vid.src = '';
+  const frame = document.getElementById('main-player-frame');
+  frame.src = '';
+  frame.style.display = 'none';
   document.getElementById('player-page').classList.remove('open');
 }
 
 function downloadMovie() {
-  if (currentStreamUrl) {
-    const a = document.createElement('a');
-    a.href = currentStreamUrl;
-    a.download = (currentMovie?.title || 'movie') + '.mp4';
-    a.target = '_blank';
-    a.click();
-    showToast('Download started');
+  // VidSrc serves an embedded player, not a direct downloadable file —
+  // so "Save" here adds to Library for quick access rather than
+  // attempting a broken file download.
+  if (!currentMovie) return;
+  const exists = library.find(m => m.id === currentMovie.id);
+  if (!exists) {
+    library.push({
+      id: currentMovie.id,
+      title: currentMovie.title || currentMovie.name,
+      poster_path: currentMovie.poster_path,
+      vote_average: currentMovie.vote_average,
+      release_date: currentMovie.release_date || currentMovie.first_air_date,
+      mediaType: currentMovie.mediaType,
+    });
+    localStorage.setItem('cymor_library', JSON.stringify(library));
+    showToast('Saved to Library');
+    updateLibraryPage();
   } else {
-    // Save to library
-    if (!currentMovie) return;
-    const exists = library.find(m => m.id === currentMovie.id);
-    if (!exists) {
-      library.push({
-        id: currentMovie.id,
-        title: currentMovie.title || currentMovie.name,
-        poster_path: currentMovie.poster_path,
-        vote_average: currentMovie.vote_average,
-        release_date: currentMovie.release_date || currentMovie.first_air_date,
-        mediaType: currentMovie.mediaType,
-      });
-      localStorage.setItem('cymor_library', JSON.stringify(library));
-      showToast('Saved to Library');
-      updateLibraryPage();
-    } else {
-      showToast('Already in Library');
-    }
+    showToast('Already in Library');
   }
 }
 
