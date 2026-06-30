@@ -1732,20 +1732,21 @@ function closeDetail() {
 }
 
 // ═══════════════════════════════════════════
-// PLAY — via VidSrc embed using TMDB ID
+// PLAY — via Cinezo embed using TMDB ID
 // ═══════════════════════════════════════════
-// VidSrc requires no auth, accepts TMDB IDs directly (which we
-// already have from search/details), includes built-in multi-language
-// subtitles, and has multi-server failover for reliability — this
-// replaces the old MovieBox-scraper chain entirely.
+// Cinezo: clean UI, no ads/popups/redirects, multi-provider
+// fallback for 99.9% uptime, built-in multilingual subtitles.
+// Movies:  https://player.cinezo.live/embed/movie/{tmdbId}
+// TV:      https://player.cinezo.live/embed/tv/{tmdbId}/{season}/{episode}
 
-const VIDSRC_BASE = 'https://vidsrc.fyi/embed';
+const CINEZO_BASE = 'https://player.cinezo.live/embed';
 
-function buildVidsrcUrl(tmdbId, mediaType, season, episode) {
+function buildPlayerUrl(tmdbId, mediaType, season, episode) {
+  const params = 'primarycolor=e8b84b&autoplay=true&poster=true';
   if (mediaType === 'tv') {
-    return `${VIDSRC_BASE}/tv/${tmdbId}/${season}/${episode}`;
+    return `${CINEZO_BASE}/tv/${tmdbId}/${season}/${episode}?${params}`;
   }
-  return `${VIDSRC_BASE}/movie/${tmdbId}`;
+  return `${CINEZO_BASE}/movie/${tmdbId}?${params}`;
 }
 
 let currentSeason = 1;
@@ -1784,7 +1785,7 @@ async function playCurrentMovie() {
     epSelectWrap.style.display = 'none';
   }
 
-  const url = buildVidsrcUrl(tmdbId, mediaType, currentSeason, currentEpisode);
+  const url = buildPlayerUrl(tmdbId, mediaType, currentSeason, currentEpisode);
   frame.src = url;
   frame.style.display = 'block';
   currentStreamUrl = url;
@@ -1823,7 +1824,7 @@ function changeEpisode() {
 
   if (!currentMovie) return;
   const tmdbId = currentMovie.id;
-  const url = buildVidsrcUrl(tmdbId, 'tv', season, episode);
+  const url = buildPlayerUrl(tmdbId, 'tv', season, episode);
   const frame = document.getElementById('main-player-frame');
   frame.src = url;
   currentStreamUrl = url;
