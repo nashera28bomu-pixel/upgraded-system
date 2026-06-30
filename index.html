@@ -1730,21 +1730,42 @@ async function playCurrentMovie() {
   document.getElementById('player-page').classList.add('open');
 
   try {
-    // Search walterwhite API for the slug
+    // Search backend API for the slug
     const searchRes = await fetch(`${STREAM_API}/search?q=${encodeURIComponent(title)}`);
     const searchData = await searchRes.json();
 
     let streamUrl = null;
 
-    if (searchData && searchData.length > 0) {
-      const first = searchData[0];
+    // FIX: API returns { query, count, movies: [...] } — not a bare array.
+    const results = searchData?.movies || [];
+
+    if (results.length > 0) {
+      const first = results[0];
       const slug = first.slug || first.url?.split('/detail/')?.[1];
+
       if (slug) {
         const detailRes = await fetch(`${STREAM_API}/detail/${slug}`);
         const detailData = await detailRes.json();
         const mp4s = detailData?.streams?.mp4 || [];
         const hls  = detailData?.streams?.hls  || [];
         streamUrl = mp4s[0] || hls[0] || null;
+
+        // FIX: if /detail has no direct mp4/hls links, fall back to
+        // /api/stream/{id}?detail_path={slug} using the subject id
+        // from the same /detail response.
+        if (!streamUrl) {
+          const subjectId = detailData?.metadata?.id;
+          if (subjectId) {
+            try {
+              const streamRes = await fetch(`${STREAM_API}/api/stream/${subjectId}?detail_path=${slug}`);
+              const streamData = await streamRes.json();
+              const sources = streamData?.sources || [];
+              streamUrl = sources[0]?.url || null;
+            } catch (e) {
+              // stream endpoint failed, streamUrl stays null
+            }
+          }
+        }
       }
     }
 
